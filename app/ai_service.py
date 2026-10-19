@@ -49,6 +49,15 @@ def _record_error(exc: Exception) -> None:
     })
 
 
+def key_fingerprint() -> dict:
+    """Masked info so an operator can confirm which key is loaded, without exposing it."""
+    key = settings.GEMINI_API_KEY
+    if not key:
+        return {"present": False}
+    return {"present": True, "length": len(key), "starts_with_AIza": key.startswith("AIza"),
+            "last4": key[-4:]}
+
+
 def ai_configured() -> bool:
     return bool(settings.GEMINI_API_KEY)
 

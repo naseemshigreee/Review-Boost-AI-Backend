@@ -4,8 +4,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _clean_secret(value: str) -> str:
+    """Tolerate common paste mistakes: whitespace, surrounding quotes, or a 'NAME=' prefix."""
+    value = (value or "").strip()
+    if value.upper().startswith("GEMINI_API_KEY="):
+        value = value.split("=", 1)[1].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
+    return value
+
+
 class Settings:
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
+    GEMINI_API_KEY: str = _clean_secret(os.getenv("GEMINI_API_KEY", ""))
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "")
     JWT_SECRET: str = os.getenv("JWT_SECRET", "")

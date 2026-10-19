@@ -46,3 +46,16 @@ def test_ai_error_is_redacted_on_health(client):
     err = client.get("/health").json()["ai_last_error"]
     assert err["type"] == "RuntimeError" and key not in err["message"] and "[redacted]" in err["message"]
     ai_service.last_error.clear()
+
+
+def test_key_cleanup_and_fingerprint():
+    from unittest.mock import patch
+    from app import ai_service
+    from app.config import _clean_secret, settings
+    k = "AIzaSyTESTKEYTESTKEYTESTKEY123456789"
+    assert _clean_secret(f'  "{k}" ') == k
+    assert _clean_secret(f"GEMINI_API_KEY={k}") == k
+    with patch.object(settings, "GEMINI_API_KEY", k):
+        fp = ai_service.key_fingerprint()
+    assert fp == {"present": True, "length": len(k), "starts_with_AIza": True, "last4": "6789"}
+    assert k not in str(fp)

@@ -119,7 +119,8 @@ def health():
     # confirm QR codes point at the right site without logging in.
     return {"status": "ok", "ai_configured": ai_configured(), "model": settings.GEMINI_MODEL,
             "frontend_base_url": settings.FRONTEND_BASE_URL,
-            "ai_last_error": ai_service.last_error or None}
+            "ai_last_error": ai_service.last_error or None,
+            "ai_key_check": ai_service.key_fingerprint()}
 
 
 # ============================== admin ==============================
