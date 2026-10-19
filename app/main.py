@@ -114,7 +114,10 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "ai_configured": ai_configured(), "model": settings.GEMINI_MODEL}
+    # frontend_base_url is public anyway (it is inside every QR code); exposing it lets ops
+    # confirm QR codes point at the right site without logging in.
+    return {"status": "ok", "ai_configured": ai_configured(), "model": settings.GEMINI_MODEL,
+            "frontend_base_url": settings.FRONTEND_BASE_URL}
 
 
 # ============================== admin ==============================

@@ -10,6 +10,7 @@ FRONT = "https://review-bost-ai-frontend.vercel.app"
 def test_full_flow(client, auth):
     health = client.get("/health").json()
     assert health["status"] == "ok" and health["ai_configured"] is False
+    assert health["frontend_base_url"] == FRONT
 
     biz = client.post("/api/admin/businesses", json=sample_business(), headers=auth)
     assert biz.status_code == 201
