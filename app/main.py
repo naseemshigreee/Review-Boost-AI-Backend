@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from qrcode.constants import ERROR_CORRECT_M
 
 from . import database as db
+from . import ai_service
 from .ai_service import ai_configured, generate_review_draft
 from .config import settings
 from .guardrails import GuardrailError, ReviewContext, sanitize_comment, validate_answers
@@ -117,7 +118,8 @@ def health():
     # frontend_base_url is public anyway (it is inside every QR code); exposing it lets ops
     # confirm QR codes point at the right site without logging in.
     return {"status": "ok", "ai_configured": ai_configured(), "model": settings.GEMINI_MODEL,
-            "frontend_base_url": settings.FRONTEND_BASE_URL}
+            "frontend_base_url": settings.FRONTEND_BASE_URL,
+            "ai_last_error": ai_service.last_error or None}
 
 
 # ============================== admin ==============================

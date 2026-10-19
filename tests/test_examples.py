@@ -34,3 +34,15 @@ def test_regenerate_returns_draft(client, auth):
     r = client.post(f"/api/public/business/{biz['id']}/generate-review",
                     json={"answers": answers, "comment": "", "regenerate": True})
     assert r.status_code == 200 and r.json()["review"]
+
+
+def test_ai_error_is_redacted_on_health(client):
+    from unittest.mock import patch
+    from app import ai_service
+    from app.config import settings
+    key = "AIzaSyTESTKEYTESTKEYTESTKEY123456789"
+    with patch.object(settings, "GEMINI_API_KEY", key):
+        ai_service._record_error(RuntimeError(f"404 model not found for key {key}"))
+    err = client.get("/health").json()["ai_last_error"]
+    assert err["type"] == "RuntimeError" and key not in err["message"] and "[redacted]" in err["message"]
+    ai_service.last_error.clear()

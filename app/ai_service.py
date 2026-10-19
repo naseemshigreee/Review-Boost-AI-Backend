@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 
 from google import genai
 from google.genai import types
@@ -32,6 +33,20 @@ STRICT RULES
 Reply with ONLY this JSON: {"review": "<the review text>"}"""
 
 _client = None
+_KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{20,}")
+# Last AI failure, safe to expose on /health: exception type, HTTP code, short redacted message.
+last_error: dict = {}
+
+
+def _record_error(exc: Exception) -> None:
+    message = _KEY_RE.sub("[redacted]", str(exc)).replace(settings.GEMINI_API_KEY or "\0", "[redacted]")
+    last_error.clear()
+    last_error.update({
+        "type": type(exc).__name__,
+        "code": getattr(exc, "code", None) if isinstance(getattr(exc, "code", None), (int, str)) else None,
+        "message": message[:160],
+        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })
 
 
 def ai_configured() -> bool:
@@ -103,7 +118,9 @@ def generate_review_draft(ctx: ReviewContext, regenerate: bool = False) -> dict:
         try:
             raw = _call_gemini(_build_prompt(ctx, regenerate, corrections), regenerate)
         except Exception as exc:  # network, quota, safety block, bad key...
-            log.warning("Gemini call failed (attempt %s): %s", attempt, type(exc).__name__)
+            _record_error(exc)
+            log.warning("Gemini call failed (attempt %s): %s %s", attempt, type(exc).__name__,
+                        last_error.get("message"))
             reason = "ai_unavailable"
             break
 
