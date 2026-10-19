@@ -1,4 +1,6 @@
+import hashlib
 import hmac
+import os
 import time
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
@@ -9,9 +11,32 @@ from fastapi import Header, HTTPException, Request
 from .config import settings
 
 
-# ---------- Admin token ----------
+# ---------- Admin password ----------
+# The configured password is hashed once at startup with a per-process random salt.
+# Only the hash is kept in memory; the plaintext is never compared or stored by this module.
+_SCRYPT = {"n": 2**14, "r": 8, "p": 1, "dklen": 32}
+_SALT = os.urandom(16)
+_PW_HASH = None
+
+
+def _derive(password: str) -> bytes:
+    return hashlib.scrypt(password.encode("utf-8"), salt=_SALT, **_SCRYPT)
+
+
+def init_password_hash(plaintext: str) -> None:
+    global _PW_HASH
+    if not plaintext:
+        raise RuntimeError("ADMIN_PASSWORD must not be empty.")
+    _PW_HASH = _derive(plaintext)
+
+
 def check_password(password: str) -> bool:
-    return hmac.compare_digest(password.encode(), settings.ADMIN_PASSWORD.encode())
+    if _PW_HASH is None:
+        return False
+    return hmac.compare_digest(_derive(password), _PW_HASH)
+
+
+# ---------- Admin token ----------
 
 
 def create_token() -> str:

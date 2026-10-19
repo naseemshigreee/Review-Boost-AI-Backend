@@ -1,5 +1,6 @@
 import io
 import logging
+import time
 from contextlib import asynccontextmanager
 
 import qrcode
@@ -12,10 +13,12 @@ from .ai_service import ai_configured, generate_review_draft
 from .config import settings
 from .guardrails import GuardrailError, ReviewContext, sanitize_comment, validate_answers
 from .schemas import (ID_PATTERN, BusinessIn, EventIn, GenerateReviewIn, LoginIn, StatusIn)
-from .security import RateLimiter, check_password, client_ip, create_token, require_admin
+from .security import (RateLimiter, check_password, client_ip, create_token,
+                       init_password_hash, require_admin)
 from .templates import all_templates
 
 logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("reviewboost")
 
 login_limiter = RateLimiter(limit=5, window_seconds=60)
 review_limiter = RateLimiter(limit=10, window_seconds=60)
@@ -31,7 +34,11 @@ DISCLAIMER = (
 async def lifespan(app: FastAPI):
     if not settings.ADMIN_PASSWORD or not settings.JWT_SECRET:
         raise RuntimeError("Set ADMIN_PASSWORD and JWT_SECRET in your .env file.")
+    started = time.perf_counter()
+    init_password_hash(settings.ADMIN_PASSWORD)
     db.init_db()
+    log.info("ReviewBoost backend ready in %.0f ms (ai_configured=%s, frontend=%s)",
+             (time.perf_counter() - started) * 1000, ai_configured(), settings.FRONTEND_BASE_URL)
     yield
 
 
@@ -62,18 +69,35 @@ def public_view(business: dict) -> dict:
     return {k: business[k] for k in keys}
 
 
+# ---------- public-view cache ----------
+# Customer pages read the same business on every scan. Cache the public view in memory
+# for a short time; any admin write evicts the entry so status changes apply immediately.
+PUBLIC_CACHE_TTL = 60.0
+_public_cache: dict = {}
+
+
+def cached_public_business(business_id: str) -> dict:
+    hit = _public_cache.get(business_id)
+    now = time.monotonic()
+    if hit and hit[1] > now:
+        business = hit[0]
+    else:
+        business = find_business_or_404(business_id)
+        _public_cache[business_id] = (business, now + PUBLIC_CACHE_TTL)
+    if business["status"] != "active":
+        raise HTTPException(403, detail={"code": "business_inactive",
+                                         "message": "This feedback page is currently not active."})
+    return business
+
+
+def evict_public(business_id: str) -> None:
+    _public_cache.pop(business_id, None)
+
+
 def find_business_or_404(business_id: str) -> dict:
     business = db.get_business(business_id)
     if not business:
         raise HTTPException(404, detail={"code": "not_found", "message": "This feedback page does not exist."})
-    return business
-
-
-def find_active_or_error(business_id: str) -> dict:
-    business = find_business_or_404(business_id)
-    if business["status"] != "active":
-        raise HTTPException(403, detail={"code": "business_inactive",
-                                         "message": "This feedback page is currently not active."})
     return business
 
 
@@ -129,6 +153,7 @@ def admin_get_business(business_id: str = Path(pattern=ID_PATTERN)):
 
 @app.put("/api/admin/businesses/{business_id}", dependencies=[Depends(require_admin)])
 def admin_update_business(body: BusinessIn, business_id: str = Path(pattern=ID_PATTERN)):
+    evict_public(business_id)
     updated = db.update_business(business_id, body.model_dump())
     if not updated:
         find_business_or_404(business_id)
@@ -137,6 +162,7 @@ def admin_update_business(body: BusinessIn, business_id: str = Path(pattern=ID_P
 
 @app.patch("/api/admin/businesses/{business_id}/status", dependencies=[Depends(require_admin)])
 def admin_set_status(body: StatusIn, business_id: str = Path(pattern=ID_PATTERN)):
+    evict_public(business_id)
     updated = db.set_status(business_id, body.status)
     if not updated:
         find_business_or_404(business_id)
@@ -145,6 +171,7 @@ def admin_set_status(body: StatusIn, business_id: str = Path(pattern=ID_PATTERN)
 
 @app.delete("/api/admin/businesses/{business_id}", status_code=204, dependencies=[Depends(require_admin)])
 def admin_delete_business(business_id: str = Path(pattern=ID_PATTERN)):
+    evict_public(business_id)
     if not db.delete_business(business_id):
         find_business_or_404(business_id)
     return Response(status_code=204)
@@ -174,7 +201,7 @@ def qr_png(
 @app.get("/api/public/business/{business_id}")
 def public_get_business(request: Request, business_id: str = Path(pattern=ID_PATTERN),
                         preview: bool = False):
-    business = find_active_or_error(business_id)
+    business = cached_public_business(business_id)
     if not preview:  # admin preview must not inflate visit counts
         db.log_event(business_id, "visit")
     return public_view(business)
@@ -184,7 +211,7 @@ def public_get_business(request: Request, business_id: str = Path(pattern=ID_PAT
 def public_generate_review(body: GenerateReviewIn, request: Request,
                            business_id: str = Path(pattern=ID_PATTERN)):
     review_limiter.check(f"gen:{client_ip(request)}")
-    business = find_active_or_error(business_id)
+    business = cached_public_business(business_id)
 
     comment, warnings = sanitize_comment(body.comment)
     try:
@@ -208,6 +235,6 @@ def public_generate_review(body: GenerateReviewIn, request: Request,
 @app.post("/api/public/business/{business_id}/events", status_code=204)
 def public_event(body: EventIn, request: Request, business_id: str = Path(pattern=ID_PATTERN)):
     event_limiter.check(f"evt:{client_ip(request)}")
-    find_active_or_error(business_id)
+    cached_public_business(business_id)
     db.log_event(business_id, body.event)
     return Response(status_code=204)
